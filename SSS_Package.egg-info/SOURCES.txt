@@ -1,0 +1,8 @@
+README.md
+setup.py
+SSS_Package/__init__.py
+SSS_Package.egg-info/PKG-INFO
+SSS_Package.egg-info/SOURCES.txt
+SSS_Package.egg-info/dependency_links.txt
+SSS_Package.egg-info/requires.txt
+SSS_Package.egg-info/top_level.txt

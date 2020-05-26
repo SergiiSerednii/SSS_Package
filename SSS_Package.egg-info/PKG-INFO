@@ -1,0 +1,15 @@
+Metadata-Version: 2.1
+Name: SSS-Package
+Version: 2019.12.27
+Summary: Set of useful functions
+Home-page: https://github.com/SergiiSerednii
+Author: Sergii Serednii
+Author-email: sseredniy@gmail.com
+License: UNKNOWN
+Description: # TBD
+Platform: UNKNOWN
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
