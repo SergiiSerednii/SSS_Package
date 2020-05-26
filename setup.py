@@ -5,13 +5,13 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="SSS_Package",
-    version="2019.12.27",
+    version="2020.05.26",
     author="Sergii Serednii",
     author_email="sseredniy@gmail.com",
     description="Set of useful functions",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/SergiiSerednii",
+    url="https://github.com/SergiiSerednii/SSS_Package",
     packages=setuptools.find_packages(),
     install_requires = [
             "pandas >= 0.24.2",
