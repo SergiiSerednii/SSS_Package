@@ -1,4 +1,4 @@
-__version__ = '2019.12.27'
+__version__ = '2020.05.26'
 __Author__ = 'Serednii Sergii'
 __contacts__ = ['sseredniy@gmail.com', 'linkedin.com/in/sergii-serednii-ab433815']
 
@@ -25,6 +25,10 @@ import logging
 from psycopg2 import connect
 from psycopg2.extras import (DictCursor, )
 from psycopg2.extras import execute_values
+import pickle
+import inspect
+import re
+import types
 
 ################################################## MyModule functions ##################################################
 # Console colors
@@ -753,7 +757,7 @@ def fmin(fn, space, algo, max_evals, early_stop_round_mode_fun=None, early_stop_
 
 ################################################ Working with DataBase #################################################
 
-def Table_to_DB(data, connection_string, table_name, to_string=True):
+def Table_to_DB(data, connection_string, table_name, to_string=True, grant_acces_to = 'public'):
     try:
         con = connect(connection_string)
         cur = con.cursor(cursor_factory=DictCursor)
@@ -773,6 +777,12 @@ def Table_to_DB(data, connection_string, table_name, to_string=True):
                """ % {'table_name': table_name, 'values': '%s', 'columns': ', '.join(data_.columns)}
 
         execute_values(cur, sql, data_.values.tolist(), page_size=data_.shape[0])
+
+        grant_acces_to = [grant_acces_to] if type(grant_acces_to) != list else grant_acces_to
+        for u in grant_acces_to:
+            sql = "grant select on %(table_name)s to %(user)s;" % {'table_name': table_name, 'user': u}
+            cur.execute(sql)
+
         con.commit()
         con.close()
 
@@ -949,3 +959,164 @@ def define_bounds(tree, leaf=0,  bounds=None):
         bt = bounds.copy()
         bt[tree.tree_.feature[leaf], 0] = max(bt[tree.tree_.feature[leaf], 0], tree.tree_.threshold[leaf])
         define_bounds(tree, tree.tree_.children_right[leaf], bt)
+
+############################################## Save / load models objects ##############################################
+
+def save_model(path, model):
+    try:
+        # in case when script is running from source file
+        model.code = inspect.getsource(model)
+    except:
+        # in case when script is running from console
+        res = 'class %s:' % re.findall(r'.*\.(.*)\'', str(model.__class__))[0]
+        for f in dir(model.__class__):
+            if(type(getattr(model, f)) == types.MethodType):
+                res += '\n' + inspect.getsource(getattr(model, f)) + '\n'
+
+        model.code = res
+
+    pickle.dump(model, open(path, "wb"))
+
+def load_model(path):
+    res = pickle.load(open(path, "rb"))
+    exec(res.code)
+
+    return res
+
+################################################## Profit Tree Class ###################################################
+class Profit_Tree:
+    def fit(self, data, feat_cols, opt_col, min_cnt_in_leaf=100):
+        self.cnt = data.shape[0]
+        self.opt = data[opt_col].sum()
+        self.div_feat = None
+        val = 0
+
+        for feat in feat_cols:
+            if data[opt_col].sum() > 0:
+                tmp = data[[feat, opt_col]].sort_values(feat)[opt_col].expanding().sum()[min_cnt_in_leaf:-min_cnt_in_leaf]
+                if tmp.min() < val:
+                    self.div_feat = feat
+                    self.div_val = data.loc[max(pd.np.where(tmp == tmp.min(), tmp.index, -1)), feat]
+                    val = tmp.min()
+            else:
+                tmp = data[[feat, opt_col]].sort_values(feat, ascending=False)[opt_col].expanding().sum()[min_cnt_in_leaf:-min_cnt_in_leaf]
+                if tmp.max() > val:
+                    self.div_feat = feat
+                    self.div_val = data.loc[max(pd.np.where(tmp == tmp.max(), tmp.index, -1)), feat]
+                    val = tmp.max()
+
+        if self.div_feat is not None and data.shape[0]>200:
+            self.left = Profit_Tree()
+            self.left.fit(data.query('%s <= @self.div_val' % self.div_feat), feat_cols, opt_col, min_cnt_in_leaf)
+
+            self.right = Profit_Tree()
+            self.right.fit(data.query('%s >  @self.div_val' % self.div_feat), feat_cols, opt_col, min_cnt_in_leaf)
+
+    def fit_avg_value(self, data, feat_cols, opt_col, avg_val, avg_val_bound, min_cnt_in_leaf=100):
+        self.cnt = data.shape[0]
+        self.opt = data[opt_col].mean()
+        self.div_feat = None
+        val = 0
+
+        if self.opt + avg_val_bound < avg_val:
+            for feat in feat_cols:
+                tmp = abs(data[[feat, opt_col]].sort_values(feat, ascending=False)[opt_col].expanding().mean()[min_cnt_in_leaf:-min_cnt_in_leaf] - avg_val)
+                if tmp.min() < avg_val_bound:
+                    tmp = data.loc[max(np.where(tmp == tmp.min(), tmp.index, -1)), feat]
+
+                    if sum(data[feat]>=tmp) > val:
+                        self.div_feat = feat
+                        self.div_val = tmp
+                        val = sum(data[feat]>=tmp)
+
+        if self.div_feat is not None and data.shape[0]>200:
+            self.left = Profit_Tree()
+            self.left.fit_avg_value(data.query('%s <= @self.div_val' % self.div_feat), feat_cols, opt_col, avg_val, avg_val_bound, min_cnt_in_leaf)
+
+            self.right = Profit_Tree()
+            self.right.fit_avg_value(data.query('%s >  @self.div_val' % self.div_feat), feat_cols, opt_col, avg_val, avg_val_bound, min_cnt_in_leaf)
+
+    def print(self, condition=''):
+        res = ['{} | cnt {:,.0f} | opt {:,.0f}'.format(condition, self.cnt, self.opt)]
+
+        if self.div_feat is not None:
+            tmp = self.left.print('{} <= {:,.3f}'.format(self.div_feat, self.div_val))
+            res += ['|-->' + tmp[0]]
+            if len(tmp)>1:
+                res += ['|   ' + i for i in tmp[1:]]
+
+            tmp = self.right.print('{} > {:,.3f}'.format(self.div_feat, self.div_val))
+            res += ['|-->' + tmp[0]]
+            if len(tmp) > 1:
+                res += ['|   ' + i for i in tmp[1:]]
+
+        return res
+
+    def __repr__(self):
+        res = self.print()
+        if len(res) > 1:
+            res[0] = 'ROOT' + res[0]
+            res = '\n'.join(res)
+        else:
+            res = 'LEAF' + res[0]
+
+        return res
+
+    def get_val(self, data):
+
+        if self.div_feat is not None:
+            res = pd.Series(0, data.index)
+            musk = data[self.div_feat] <= self.div_val
+            res[musk] = self.left.get_val(data.loc[musk, :])
+            res[~musk] = self.right.get_val(data.loc[~musk, :])
+
+        else:
+            res = pd.Series(self.opt, data.index)
+
+        return res
+
+    def set_leafs(self, leaf=0):
+        self.leaf = leaf
+        if self.div_feat is not None:
+            leaf = self.left.set_leafs(leaf + 1)
+            leaf = self.right.set_leafs(leaf + 1)
+
+        return leaf
+
+    def get_leaf(self, data):
+        if not hasattr(self, 'leaf'):
+            self.set_leafs()
+
+        if self.div_feat is not None:
+            res = pd.Series(0, data.index)
+            musk = data[self.div_feat] <= self.div_val
+            res[musk] = self.left.get_leaf(data.loc[musk, :])
+            res[~musk] = self.right.get_leaf(data.loc[~musk, :])
+
+        else:
+            res = pd.Series(self.leaf, data.index)
+
+        return res
+
+    def set_bounds(self, bounds):
+        self.bounds = bounds
+
+        if self.div_feat is not None:
+            tmp = bounds.copy()
+            tmp.loc[self.div_feat, 'max'] = self.div_val
+            self.left.set_bounds(tmp)
+            tmp = bounds.copy()
+            tmp.loc[self.div_feat, 'min'] = self.div_val
+            self.right.set_bounds(tmp)
+
+    def get_bounds(self):
+        if self.div_feat is None:
+            res = pd.np.array(self.bounds)
+            res.resize((1, res.shape[0], res.shape[1]))
+        else:
+            res = pd.np.empty((0, self.bounds.shape[0], self.bounds.shape[1]))
+            res = pd.np.append(res, self.left.get_bounds(), 0)
+            res = pd.np.append(res, self.right.get_bounds(), 0)
+
+        return res
+
